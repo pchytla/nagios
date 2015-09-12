@@ -30,9 +30,12 @@ use JSON;
 use constant AP_NAME => '.1.3.6.1.4.1.2011.6.139.2.6.1.1.7'; #HwApSysName
 use constant AP_IP => '.1.3.6.1.4.1.2011.6.139.2.6.1.1.15'; #hwApIpAddress
 use constant AP_MAC => '.1.3.6.1.4.1.2011.6.139.2.6.1.1.5'; #hwApMAC
+use constant AP_SN => '.1.3.6.1.4.1.2011.6.139.2.6.1.1.6'; #hwApSn
 use constant AP_TYPE => '.1.3.6.1.4.1.2011.6.139.2.6.1.1.2'; #hwApUsedType
 use constant AP_STATE => '.1.3.6.1.4.1.2011.6.139.2.6.1.1.8'; #HwApRunState
 use constant AP_REGION => '.1.3.6.1.4.1.2011.6.139.2.6.1.1.4'; #hwApUsedRegionIndex
+use constant AP_USERCOUNT => '.1.3.6.1.4.1.2011.6.139.2.6.6.1.5'; #hwApOnlineUserNum
+use constant AP_TEMP => '.1.3.6.1.4.1.2011.6.139.2.6.6.1.4'; #hwApTemperature
 
 my %hwApRunStates = (
                          1=>'idle',
@@ -55,6 +58,12 @@ my $ip;
 my $version;
 my $region0=undef;
 my $json_file="/var/lib/nagios3/wlanac.json";
+my $warning;
+my $warning_usercount=15;
+my $warning_aptemp=60;
+my $critical;
+my $critical_usercount=25;
+my $critical_aptemp=80;
 
 sub HexParseMac {
         my $hmac=shift;
@@ -63,9 +72,25 @@ sub HexParseMac {
         return lc($hmac);
 }
 
+sub get_nagios() {
+	my $code=shift;
+	return "" unless ($code);
+
+	foreach my $k (keys(%ERRORS)) {
+		if ($ERRORS{$k}==$code) {
+			$k=~s/^(\w{4}).*/$1/;	
+			return "(".$k."!!)"
+		}
+	}
+
+	return 'NOTFOUND';
+}
+
 if (!GetOptions( 'hostname|H=s' => \$wlanac,
                  'community|C=s' => \$community,
 		'region0|0' => \$region0,
+		'warning|w=s' => \$warning,
+		'critical|x=s' => \$critical,
                  'ip|I=s' => \$ip )) { 
 	print "Wrong Params\n";
         exit(0);
@@ -76,9 +101,32 @@ if (!defined($ip)) {
    --hostname|-H - Huawei AC6605 IP / name
    --community|-C - snmp community
    --region0|-0 - use check for Region=0 ( I'm using region=0 for newly added APs)
+   --warning|-w - warning value for Connected Users to AP,The temperature of AP - ex. 15,60  ( default : 15, 60 )
+   --critical|-x - critical value for Connected Users to AP,The temperature of AP - ex. 25,80 ( default : 25,80 )
    --ip|-I - Access-point IP
 ";
    exit(0);
+}
+
+if (defined($warning)) {
+	my @warn=split(',',$warning);
+	if (scalar(@warn)==2) {
+	$warning_usercount=int($warn[0]) if ($warn[0]=~m/^\d+$/);
+	$warning_aptemp=int($warn[1]) if ($warn[1]=~m/^\d+$/);
+	}
+}
+
+if (defined($critical)) {
+	my @crit=split(',',$critical);
+	if (scalar(@crit)==2) {
+	$critical_usercount=int($crit[0]) if ($crit[0]=~m/^\d+$/);
+	$critical_aptemp=int($crit[1]) if ($crit[1]=~m/^\d+$/);
+	}
+}
+
+if ($critical_usercount<$warning_usercount || $critical_aptemp<$warning_aptemp) {
+		print STDOUT "Wrong args\n";
+		exit($ERRORS{'UNKNOWN'});
 }
 
 if (!open(FILE,"<$json_file")) {
@@ -121,9 +169,12 @@ if ((ref($s) eq "" )) {
 my $res=$s->get_request( -varbindlist => [ AP_NAME.".".$apid,
 						AP_IP.".".$apid,
 						AP_MAC.".".$apid,
+						AP_SN.".".$apid,
 						AP_TYPE.".".$apid,
 						AP_STATE.".".$apid,
 						AP_REGION.".".$apid,
+						AP_USERCOUNT.".".$apid,
+						AP_TEMP.".".$apid,
                                                         ] );
 
 my $err = $s->error();
@@ -140,18 +191,44 @@ if (defined($hwApRunStates{$res->{AP_STATE.".".$apid}})) {
 
 #convert mac 
 my $mac=&HexParseMac($res->{AP_MAC.".".$apid});
+my %normal = ( 'users' => 0 , 'temp' => 0 );
 
-print STDOUT "AP: ".$res->{AP_NAME.".".$apid}." MAC: ".$mac." TYPE: ".$res->{AP_TYPE.".".$apid}." STATE: ".$state." REGION:".$res->{AP_REGION.".".$apid}." ";
+if ($hwApRunStates{$res->{AP_STATE.".".$apid}} eq 'normal') {
+		if ($res->{AP_USERCOUNT.".".$apid} > $warning_usercount) {
+			$normal{'users'}=$ERRORS{'WARNING'};
+			if ($res->{AP_USERCOUNT.".".$apid} > $critical_usercount) {
+				$normal{'users'}=$ERRORS{'CRITICAL'};
+			}
+		}
+
+		if ($res->{AP_TEMP.".".$apid} > $warning_aptemp ) {
+				$normal{'temp'}=$ERRORS{'WARNING'};
+				if ($res->{AP_TEMP.".".$apid} > $critical_aptemp) {
+						$normal{'temp'}=$ERRORS{'CRITICAL'};
+				}
+		}
+}
+
+print STDOUT "AP: ".$res->{AP_NAME.".".$apid}.
+	     " MAC: ".$mac.
+	     " SN: ".$res->{AP_SN.".".$apid}.
+	     " TYPE: ".$res->{AP_TYPE.".".$apid}.
+	     " STATE: ".$state.
+	     " REGION:".$res->{AP_REGION.".".$apid}.
+	     " TEMP".&get_nagios($normal{'temp'}).":".$res->{AP_TEMP.".".$apid}.
+	     " USERCOUNT".&get_nagios($normal{'temp'}).":".$res->{AP_USERCOUNT.".".$apid}.
+	     " ";
+ 
 
 
 if ($state eq "UNKNOWN") {
-	print " Wrong STATE ".$res->{AP_STATE.".".$apid}." from AC6605\n";
+	print " -  Wrong STATE ".$res->{AP_STATE.".".$apid}." from AC6605\n";
 	exit($ERRORS{'CRITICAL'});
 
 }
 
 if ($mac ne $ap->{$ip}->{'mac'}) {
-	print " Wrong MAC JSON:".$ap->{$ip}->{'mac'}." AC6605: ".$mac."\n";
+	print " -  Wrong MAC JSON:".$ap->{$ip}->{'mac'}." AC6605: ".$mac."\n";
 	exit($ERRORS{'WARNING'});
 }
 
@@ -161,9 +238,17 @@ if ($res->{AP_REGION.".".$apid} == 0 && defined($region0)) {
 	exit($ERRORS{'WARNING'});
 }
 
+
 if ($hwApRunStates{$res->{AP_STATE.".".$apid}} eq 'normal') {
-	print " -  OK\n";
-	exit($ERRORS{'OK'});
+		my $normal_exit=($normal{'users'} > $normal{'temp'})?$normal{'users'}:$normal{'temp'};
+
+		if ($normal_exit != $ERRORS{'OK'}) { 
+			print "\n";
+			exit($normal_exit);
+		}
+
+		print " - OK\n";
+		exit($ERRORS{'OK'});
 }
 
 if ($hwApRunStates{$res->{AP_STATE.".".$apid}} eq 'fault' ) {
