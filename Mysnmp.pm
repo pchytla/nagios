@@ -58,7 +58,7 @@ sub my_walk() {
                         print STDERR $s->{'_hostname'}." : ERR: OID($baseoid) ".$s->error."\n";
         }
 
-        print $s->{'_hostname'}. "(my_walk) OID ".$oid." elapsed time : ".sprintf("%f",tv_interval($t0))." sek\n";
+        print STDERR $s->{'_hostname'}. "(my_walk) OID ".$oid." elapsed time : ".sprintf("%f",tv_interval($t0))." sec\n";
         return $r;
 }
 

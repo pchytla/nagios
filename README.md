@@ -15,4 +15,3 @@ Example
 
 	./huawei_ac6605_checkap.pl -H 172.99.19.2 -C foobar  -0 -I 172.99.12.81 -w 5,20 -x 10,22
 	AP: ap-52 MAC: f8:4a:bf:f1:28:c0 SN: 210235998899DB000819 TYPE: AP6510DN-AGN STATE: normal REGION:2 TEMP(WARN!!):22 USERCOUNT(WARN!!):12
-	
